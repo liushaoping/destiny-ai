@@ -1,0 +1,63 @@
+import { OpenAI } from 'openai';
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+});
+
+export const runtime = 'edge';
+
+export async function POST(req: Request) {
+    try {
+        const { name, gender, birthDate, question } = await req.json();
+
+        const systemPrompt = `
+      You are the "Aether Oracle," a mystical AI with deep knowledge of Astrology and Tarot.
+      Your goal is to provide a reading that is so accurate it feels supernatural.
+      
+      Structure your response:
+      1. [CURRENT ENERGY]: Start with a 2-paragraph deep dive into the user's current emotional and spiritual struggle. Use "Barnum Effect" to make it highly relatable. (This is the FREE part).
+      2. [THE TURNING POINT]: Write: "---PAYWALL---".
+      3. [FUTURE REVELATION]: Provide specific predictions and dates for the next 3 months.
+      4. [GUIDANCE]: Give 3 rituals to improve their energy.
+
+      Tone: Mystical, poetic, empathetic, and authoritative. 
+      Language: Respond in the language used by the user.
+    `;
+
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o',
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: `Name: ${name}, Gender: ${gender}, Birth: ${birthDate}, Question: ${question}` }
+            ],
+            stream: true,
+            temperature: 0.8,
+        });
+
+        const stream = new ReadableStream({
+            async start(controller) {
+                const encoder = new TextEncoder();
+                for await (const chunk of response) {
+                    const content = chunk.choices[0]?.delta?.content || '';
+                    if (content) {
+                        controller.enqueue(encoder.encode(content));
+                    }
+                }
+                controller.close();
+            },
+        });
+
+        return new Response(stream);
+    } catch (error) {
+        // 关键修改：打印真实错误到终端，返回详细错误信息
+        console.error('OpenAI API 调用错误:', error); // 终端打印完整错误
+        // 返回真实错误（本地调试用）
+        return new Response(
+            JSON.stringify({
+                error: 'Celestial interference. Try again.',
+                detail: error instanceof Error ? error.message : String(error) // 新增：真实错误详情
+            }),
+            { status: 500 }
+        );
+    }
+}
