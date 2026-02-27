@@ -1,63 +1,39 @@
-import { OpenAI } from 'openai';
+// 1. 引入必要的类
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
-
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
+    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+
     try {
-        const { name, gender, birthDate, question } = await req.json();
+        // 2. 关键修复：在初始化时强制指定 API 版本为 "v1"
+        const genAI = new GoogleGenerativeAI(apiKey!);
 
-        const systemPrompt = `
-      You are the "Aether Oracle," a mystical AI with deep knowledge of Astrology and Tarot.
-      Your goal is to provide a reading that is so accurate it feels supernatural.
-      
-      Structure your response:
-      1. [CURRENT ENERGY]: Start with a 2-paragraph deep dive into the user's current emotional and spiritual struggle. Use "Barnum Effect" to make it highly relatable. (This is the FREE part).
-      2. [THE TURNING POINT]: Write: "---PAYWALL---".
-      3. [FUTURE REVELATION]: Provide specific predictions and dates for the next 3 months.
-      4. [GUIDANCE]: Give 3 rituals to improve their energy.
-
-      Tone: Mystical, poetic, empathetic, and authoritative. 
-      Language: Respond in the language used by the user.
-    `;
-
-        const response = await openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: `Name: ${name}, Gender: ${gender}, Birth: ${birthDate}, Question: ${question}` }
-            ],
-            stream: true,
-            temperature: 0.8,
-        });
-
-        const stream = new ReadableStream({
-            async start(controller) {
-                const encoder = new TextEncoder();
-                for await (const chunk of response) {
-                    const content = chunk.choices[0]?.delta?.content || '';
-                    if (content) {
-                        controller.enqueue(encoder.encode(content));
-                    }
-                }
-                controller.close();
-            },
-        });
-
-        return new Response(stream);
-    } catch (error) {
-        // 关键修改：打印真实错误到终端，返回详细错误信息
-        console.error('OpenAI API 调用错误:', error); // 终端打印完整错误
-        // 返回真实错误（本地调试用）
-        return new Response(
-            JSON.stringify({
-                error: 'Celestial interference. Try again.',
-                detail: error instanceof Error ? error.message : String(error) // 新增：真实错误详情
-            }),
-            { status: 500 }
+        // 3. 另一种保底写法（如果上面失效）：直接指定模型完整路径
+        const model = genAI.getGenerativeModel(
+            { model: "gemini-1.5-flash" },
+            { apiVersion: "v1" } // 👈 强制覆盖默认的 v1beta
         );
+
+        const { name, question, cards } = await req.json();
+
+        // 构建 Prompt
+        const prompt = `你是一位神秘塔罗牌大师。用户${name}问：${question}。抽到的牌：${cards.map((c: any) => c.name).join(', ')}。请给出占卜结果。`;
+
+        // 4. 执行生成
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+
+        return new Response(text, {
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+
+    } catch (error: any) {
+        console.error("❌ FINAL ERROR:", error.message);
+        return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" }
+        });
     }
 }
