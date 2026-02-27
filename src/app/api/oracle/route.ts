@@ -8,33 +8,34 @@ export async function POST(req: Request) {
         const { name, question, cards } = await req.json();
         const promptText = `你是一位神秘的塔罗牌大师。用户${name}想问：${question}。抽到的牌是：${cards.map((c: any) => c.name).join(', ')}。请给出占卜结果。`;
 
-        // 🔥 修改点：使用你列表中显示的 Gemini 3 Flash
-        // 路径依然使用 v1 稳定版
-        const url = `https://generativelanguage.googleapis.com/v1/models/gemini-3-flash:generateContent?key=${apiKey}`;
+        // 💡 备选模型列表，按优先级排序
+        const modelNames = ["gemini-3-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"];
+        let lastError = "";
 
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                contents: [{ parts: [{ text: promptText }] }]
-            })
-        });
+        for (const modelName of modelNames) {
+            // 尝试 v1beta 路径，因为它对新模型支持最全
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-        const data = await response.json();
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] })
+            });
 
-        if (!response.ok) {
-            console.error("❌ API Detail Error:", data);
-            // 如果 gemini-3-flash 依然报找不到，尝试 gemini-3.1-pro
-            return new Response(JSON.stringify(data), { status: response.status });
+            if (response.ok) {
+                const data = await response.json();
+                const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (text) return new Response(text, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+            } else {
+                const errData = await response.json();
+                lastError = `${modelName}: ${errData.error?.message}`;
+                console.warn(`⚠️ Attempt failed for ${modelName}`, errData.error?.message);
+            }
         }
 
-        const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || "大师正在感应宇宙能量...";
-
-        return new Response(aiResponse, {
-            headers: { "Content-Type": "text/plain; charset=utf-8" },
-        });
+        throw new Error(`所有模型均不可用。最后一次错误：${lastError}`);
 
     } catch (error: any) {
-        return new Response(error.message, { status: 500 });
+        return new Response(JSON.stringify({ error: error.message }), { status: 500 });
     }
 }
