@@ -1,42 +1,32 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// 1. 初始化，增加 key 存在性校验
-const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-const genAI = apiKey ? new GoogleGenerativeAI(apiKey) : null;
-
-// 建议在部署 Vercel 时启用 edge 以获得更好的流式体验
 export const runtime = 'edge';
 
 export async function POST(req: Request) {
     try {
-        // 如果 key 没配置，直接拦截并报错
-        if (!genAI) {
+        const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+
+        // 如果 Key 没拿到，直接返回清晰的提示
+        if (!apiKey || apiKey.length < 10) {
             return new Response(JSON.stringify({
-                error: "Configuration missing",
-                details: "API Key is not configured in Vercel Environment Variables."
+                error: "Key Missing",
+                details: "Vercel 环境变量中未找到有效的 Google API Key。"
             }), { status: 500 });
         }
 
+        const genAI = new GoogleGenerativeAI(apiKey);
         const { name, gender, birthDate, question, cards, isPaid } = await req.json();
-        const cardNames = cards.map((c: any) => c.name).join(', ');
 
-        // 2. 这里的模型名称使用最新的稳定版本标识符
+        // 调用 Gemini 1.5 Flash
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-        const promptText = `
-      You are the "Aether Oracle." 
-      User: ${name} (${gender}, born ${birthDate}). 
-      Cards Drawn: ${cardNames}.
-      Question: "${question}".
+        const promptText = `你是一位神秘的塔罗牌大师。
+      求问者：${name} (${gender}, 出生日期: ${birthDate})。
+      抽到的牌：${cards.map((c: any) => c.name).join(', ')}。
+      问题：${question}。
+      ${isPaid ? "请提供500字以上的深度解析。" : "请简单提供两段解析，然后加上 '---PAYWALL---' 字符串并停止。"}
+      请用中文回答，保持神秘感。`;
 
-      ${isPaid
-            ? "The user has PAID. Provide a deep, mystical 500-word analysis."
-            : "FREE trial. Provide 2 paragraphs, then add the exact string '---PAYWALL---' and stop."
-        }
-      Tone: Mystical, empathetic, and professional. Match the user's language.
-    `;
-
-        // 3. 执行流式生成
         const result = await model.generateContentStream(promptText);
 
         const stream = new ReadableStream({
@@ -45,33 +35,22 @@ export async function POST(req: Request) {
                 try {
                     for await (const chunk of result.stream) {
                         const chunkText = chunk.text();
-                        if (chunkText) {
-                            controller.enqueue(encoder.encode(chunkText));
-                        }
+                        if (chunkText) controller.enqueue(encoder.encode(chunkText));
                     }
                     controller.close();
                 } catch (err: any) {
-                    // 这里捕捉流过程中的具体错误
-                    controller.enqueue(encoder.encode(`\n[Cosmic Error]: ${err.message}`));
+                    controller.enqueue(encoder.encode(`\n[流解析错误]: ${err.message}`));
                     controller.close();
                 }
             },
         });
 
-        return new Response(stream, {
-            headers: { "Content-Type": "text/plain; charset=utf-8" },
-        });
+        return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
 
     } catch (error: any) {
-        console.error("Gemini Route Error:", error);
-
-        // 返回标准 JSON 格式错误，防止前端解析出 HTML
-        return new Response(
-            JSON.stringify({
-                error: "The cosmic connection was interrupted.",
-                details: error.message || "Unknown API error"
-            }),
-            { status: 500, headers: { "Content-Type": "application/json" } }
-        );
+        return new Response(JSON.stringify({
+            error: "宇宙连接中断",
+            details: error.message
+        }), { status: 500, headers: { "Content-Type": "application/json" } });
     }
 }
