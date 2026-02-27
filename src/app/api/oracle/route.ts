@@ -1,39 +1,44 @@
 export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
-    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-    if (!apiKey) return new Response("API Key Missing", { status: 500 });
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+        return new Response("OpenAI API Key Missing", { status: 500 });
+    }
 
     try {
         const { name, question, cards } = await req.json();
-        const promptText = `你是一位神秘的塔罗牌大师。用户${name}想问：${question}。抽到的牌是：${cards.map((c: any) => c.name).join(', ')}。请给出占卜结果。`;
+        const promptText = `你是一位神秘的塔罗牌大师。用户${name}想问：${question}。抽到的牌是：${cards.map((c: any) => c.name).join(', ')}。请给出解读结果。`;
 
-        // 💡 备选模型列表，按优先级排序
-        const modelNames = ["gemini-3-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"];
-        let lastError = "";
+        // 直接使用原生 fetch 请求 OpenAI 接口
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: "gpt-4o-mini", // 使用性价比最高的模型
+                messages: [
+                    { role: "system", content: "你是一位精通塔罗牌占卜的大师，语气神秘且富有洞察力。" },
+                    { role: "user", content: promptText }
+                ],
+                temperature: 0.7
+            })
+        });
 
-        for (const modelName of modelNames) {
-            // 尝试 v1beta 路径，因为它对新模型支持最全
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+        const data = await response.json();
 
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ parts: [{ text: promptText }] }] })
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (text) return new Response(text, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
-            } else {
-                const errData = await response.json();
-                lastError = `${modelName}: ${errData.error?.message}`;
-                console.warn(`⚠️ Attempt failed for ${modelName}`, errData.error?.message);
-            }
+        if (!response.ok) {
+            console.error("❌ OpenAI API Error:", data);
+            return new Response(JSON.stringify({ error: data.error?.message || "OpenAI Error" }), { status: response.status });
         }
 
-        throw new Error(`所有模型均不可用。最后一次错误：${lastError}`);
+        const aiResponse = data.choices?.[0]?.message?.content || "大师正在感应星象...";
+
+        return new Response(aiResponse, {
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
 
     } catch (error: any) {
         return new Response(JSON.stringify({ error: error.message }), { status: 500 });
