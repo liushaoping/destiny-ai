@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "framer-motion": "^12.34.3",
     "https-proxy-agent": "^7.0.6",
     "lucide-react": "^0.575.0",

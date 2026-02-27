@@ -1,8 +1,8 @@
-import { OpenAI } from 'openai';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+// 1. 初始化 Gemini 客户端
+// 确保你在 .env.local 中添加了 GOOGLE_GENERATIVE_AI_API_KEY
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_GENERATIVE_AI_API_KEY || "");
 
 export const runtime = 'edge';
 
@@ -10,48 +10,68 @@ export async function POST(req: Request) {
     try {
         const { name, gender, birthDate, question, cards, isPaid } = await req.json();
 
-        // 格式化抽到的牌面
+        // 格式化卡牌信息
         const cardNames = cards.map((c: any) => c.name).join(', ');
 
-        const systemPrompt = `
+        // 2. 构建系统级 Prompt
+        const promptText = `
       You are the "Aether Oracle," a master of Tarot and Cosmic energies.
       The user ${name} (${gender}, born ${birthDate}) has drawn 3 cards: ${cardNames}.
       Their question is: "${question}".
 
       ${isPaid
-            ? "The user has PAID. Provide a 500-word deep mystical analysis. Breakdown each card and their connection to the future. Do NOT use paywall tags."
-            : "The user is FREE. Provide a 2-paragraph reading focusing on the first card only. Then write '---PAYWALL---' to hide the rest."
+            ? "The user has PAID. Provide a deep mystical analysis of at least 500 words. Breakdown each card and their connection to the future. Do NOT use any paywall tags."
+            : "The user is on a FREE trial. Provide a 2-paragraph reading focusing ONLY on the general energy of the first card. After the second paragraph, you MUST write the exact string '---PAYWALL---' and then stop immediately."
         }
 
-      Structure:
-      1. [The Spread]: Acknowledge the cards ${cardNames}.
-      2. [Current Energy]: Deep dive into the first card.
-      3. [Future & Guidance]: (This part is hidden if not paid).
-      
-      Tone: High-end, mysterious, empathetic. 
-      Language: Match the user's question language.
+      Structure your response in a mysterious, high-end, and empathetic tone. 
+      Match the language of the user's question.
     `;
 
-        const response = await openai.chat.completions.create({
-            model: 'gpt-4o',
-            messages: [{ role: 'system', content: systemPrompt }],
-            stream: true,
-            temperature: 0.8,
-        });
+        // 3. 调用 Gemini 1.5 Flash 模型
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
+        // 开启流式传输
+        const result = await model.generateContentStream(promptText);
+
+        // 4. 将 Gemini 的流转换为标准 ReadableStream 以适配 Next.js
         const stream = new ReadableStream({
             async start(controller) {
                 const encoder = new TextEncoder();
-                for await (const chunk of response) {
-                    const content = chunk.choices[0]?.delta?.content || '';
-                    if (content) controller.enqueue(encoder.encode(content));
+                try {
+                    for await (const chunk of result.stream) {
+                        const chunkText = chunk.text();
+                        if (chunkText) {
+                            controller.enqueue(encoder.encode(chunkText));
+                        }
+                    }
+                    controller.close();
+                } catch (err) {
+                    controller.error(err);
                 }
-                controller.close();
             },
         });
 
-        return new Response(stream);
-    } catch (error) {
-        return new Response(JSON.stringify({ error: 'Connection to stars failed.' }), { status: 500 });
+        return new Response(stream, {
+            headers: {
+                "Content-Type": "text/plain; charset=utf-8",
+                "Transfer-Encoding": "chunked",
+            },
+        });
+
+    } catch (error: any) {
+        // 调试日志
+        console.error("🌌 Gemini Oracle Error:", error);
+
+        return new Response(
+            JSON.stringify({
+                error: "The cosmic connection was interrupted.",
+                details: error.message
+            }),
+            {
+                status: 500,
+                headers: { "Content-Type": "application/json" }
+            }
+        );
     }
 }
