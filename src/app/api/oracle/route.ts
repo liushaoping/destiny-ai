@@ -1,56 +1,45 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-export const runtime = 'edge';
+// 强制使用 nodejs 运行环境，有时 Edge 运行环境会导致环境变量读取不稳
+export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
-    try {
-        const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    // 1. 打印内部调试信息 (会在 Vercel Logs 显示)
+    console.log("--- 🌌 ORACLE INVOCATION START ---");
 
-        // 如果 Key 没拿到，直接返回清晰的提示
-        if (!apiKey || apiKey.length < 10) {
-            return new Response(JSON.stringify({
-                error: "Key Missing",
-                details: "Vercel 环境变量中未找到有效的 Google API Key。"
-            }), { status: 500 });
+    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    console.log("API Key exists:", !!apiKey);
+    if (apiKey) console.log("Key prefix:", apiKey.substring(0, 6));
+
+    try {
+        if (!apiKey) {
+            throw new Error("ENVIRONMENT_VARIABLE_MISSING: GOOGLE_GENERATIVE_AI_API_KEY is not set.");
         }
 
         const genAI = new GoogleGenerativeAI(apiKey);
-        const { name, gender, birthDate, question, cards, isPaid } = await req.json();
+        const { name, question, cards } = await req.json();
 
-        // 调用 Gemini 1.5 Flash
+        // 2. 这里的模型名称采用最稳妥的写法
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-        const promptText = `你是一位神秘的塔罗牌大师。
-      求问者：${name} (${gender}, 出生日期: ${birthDate})。
-      抽到的牌：${cards.map((c: any) => c.name).join(', ')}。
-      问题：${question}。
-      ${isPaid ? "请提供500字以上的深度解析。" : "请简单提供两段解析，然后加上 '---PAYWALL---' 字符串并停止。"}
-      请用中文回答，保持神秘感。`;
+        console.log("Attempting to generate content...");
 
-        const result = await model.generateContentStream(promptText);
+        // 使用非流式请求测试稳定性
+        const result = await model.generateContent(`你是一位塔罗牌大师。用户${name}问：${question}。抽到的牌是：${cards.map((c: any) => c.name).join(', ')}。请给出简短占卜。`);
+        const response = await result.response;
+        const text = response.text();
 
-        const stream = new ReadableStream({
-            async start(controller) {
-                const encoder = new TextEncoder();
-                try {
-                    for await (const chunk of result.stream) {
-                        const chunkText = chunk.text();
-                        if (chunkText) controller.enqueue(encoder.encode(chunkText));
-                    }
-                    controller.close();
-                } catch (err: any) {
-                    controller.enqueue(encoder.encode(`\n[流解析错误]: ${err.message}`));
-                    controller.close();
-                }
-            },
+        console.log("Content generated successfully!");
+
+        return new Response(text, {
+            headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
 
-        return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
-
     } catch (error: any) {
-        return new Response(JSON.stringify({
-            error: "宇宙连接中断",
-            details: error.message
-        }), { status: 500, headers: { "Content-Type": "application/json" } });
+        console.error("❌ CRITICAL ERROR:", error.message);
+        return new Response(JSON.stringify({ error: error.message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" }
+        });
     }
 }
