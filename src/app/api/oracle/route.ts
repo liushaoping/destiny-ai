@@ -15,9 +15,7 @@ export async function POST(req: Request) {
     try {
         // ✅ 核心修改：在 getGenerativeModel 中指定模型，
         // 对于 0.24.1+ 版本，SDK 会默认尝试最稳定的 v1 接口。
-        const model = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash"
-        });
+        const model = genAI.getGenerativeModel({ model: "models/gemini-1.5-flash" });
 
         const { name, question, cards } = await req.json();
         const prompt = `你是一位神秘的塔罗牌大师。用户${name}想问：${question}。抽到的牌是：${cards.map((c: any) => c.name).join(', ')}。请给出占卜结果。`;
