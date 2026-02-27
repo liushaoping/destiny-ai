@@ -63,6 +63,7 @@ function TarotContent() {
     }
   };
 
+  // 在 getReading 函数内进行如下修改：
   const getReading = async (paidOverride = false) => {
     const finalPaidStatus = paidOverride || isPaid;
     setStep('reading');
@@ -70,39 +71,55 @@ function TarotContent() {
     setReading('');
     setShowPaywall(false);
 
-    // 缓存当前状态以便支付后回来恢复
-    localStorage.setItem('pendingReading', JSON.stringify({ form: formData, cards: selectedCards }));
+    // 1. 缓存当前状态以便支付后回来恢复
+    localStorage.setItem('pendingReading', JSON.stringify({
+      form: formData,
+      cards: selectedCards
+    }));
 
     try {
       const res = await fetch('/api/oracle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formData, cards: selectedCards, isPaid: finalPaidStatus }),
+        body: JSON.stringify({
+          ...formData,
+          cards: selectedCards,
+          isPaid: finalPaidStatus
+        }),
       });
 
+      if (!res.ok) throw new Error("Connection failed");
       if (!res.body) return;
-      setLoading(false);
+
+      setLoading(false); // 🔥 在流开始前关闭 Loading 动画，露出文字区
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let fullText = '';
+      let accumulatedText = ''; // 用于内部判断 Paywall
 
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value);
-        fullText += chunk;
 
-        if (!finalPaidStatus && fullText.includes('---PAYWALL---')) {
-          setReading(fullText.split('---PAYWALL---')[0]);
+        const chunk = decoder.decode(value, { stream: true });
+        accumulatedText += chunk;
+
+        // 🔥 打字机效果核心：逐字更新状态
+        // 如果未支付且遇到了 Paywall 标记，截断并显示支付弹窗
+        if (!finalPaidStatus && accumulatedText.includes('---PAYWALL---')) {
+          const parts = accumulatedText.split('---PAYWALL---');
+          setReading(parts[0]); // 只显示第一部分
           setShowPaywall(true);
-          reader.cancel();
+          reader.cancel(); // 停止读取后续流
           break;
         }
-        setReading(fullText);
+
+        // 实时更新文字状态，触发 React 渲染
+        setReading(accumulatedText);
       }
     } catch (err) {
       setLoading(false);
+      console.error("❌ Oracle Error:", err);
       alert("Celestial interference. Please try again.");
     }
   };
